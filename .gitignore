@@ -1,0 +1,16 @@
+# Local Claude Code settings (per-machine, not shared)
+.claude/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Runtime artefacts
+*.log
+
+# Per-machine secrets — generated locally by the operator
+pos/secrets/db_password
+pos/secrets/audit_key
+pos/secrets/session_secret

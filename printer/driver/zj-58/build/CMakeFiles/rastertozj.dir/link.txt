@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -rdynamic -Wl,--dependency-file=CMakeFiles/rastertozj.dir/link.d CMakeFiles/rastertozj.dir/rastertozj.c.o -o rastertozj  -lcups -lcupsimage

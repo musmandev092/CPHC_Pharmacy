@@ -1,0 +1,122 @@
+# CPHC Pharmacy POS — minimal compose.
+# Two services: app (Alpine + PHP-FPM + Caddy + cups-client) and postgres.
+# Side-by-side with the existing Laravel stack: ports 8080/8443.
+# When ready to cut over, change ports to 80/443 and stop the old stack.
+
+name: cphc-pos
+
+services:
+    app:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: cphc/pos-app:latest
+        restart: unless-stopped
+        depends_on:
+            postgres:
+                condition: service_healthy
+        ports:
+            - "80:80"
+            - "443:443"
+        # lp group on host is GID 7; cups-client in container needs this
+        # supplementary group to write to bind-mounted /var/run/cups/cups.sock.
+        group_add:
+            - "7"
+        volumes:
+            - app-storage:/var/cphc/storage
+            - /var/run/cups/cups.sock:/var/run/cups/cups.sock
+            - /etc/cups:/etc/cups:ro
+        read_only: true
+        tmpfs:
+            - /tmp:size=64M,mode=1777
+            - /run:size=8M,mode=0755
+            - /var/log/caddy:size=16M,mode=0755
+        security_opt:
+            - no-new-privileges:true
+        cap_drop: [ALL]
+        cap_add:
+            - NET_BIND_SERVICE
+            - CHOWN
+            - SETUID
+            - SETGID
+        mem_limit: 256m
+        cpus: 1.5
+        environment:
+            DB_HOST: postgres
+            DB_PORT: 5432
+            DB_NAME: cphc
+            DB_USER: cphc_app
+            DB_PASSWORD_FILE: /run/secrets/db_password
+            AUDIT_KEY_FILE: /run/secrets/audit_key
+            SESSION_SECRET_FILE: /run/secrets/session_secret
+            APP_ENV: production
+            APP_TZ: Asia/Karachi
+        secrets:
+            # Short-form: file-mode 0444 is what Compose mounts by default; the
+            # uid/gid/mode keys are Swarm-only and trigger noisy warnings on
+            # plain `docker compose up`.
+            - db_password
+            - audit_key
+            - session_secret
+        networks: [cphc-pos]
+        healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://localhost/healthz"]
+            interval: 30s
+            timeout: 3s
+            retries: 3
+
+    postgres:
+        image: postgres:17-alpine
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: cphc
+            POSTGRES_USER: cphc_app
+            POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+            PGDATA: /var/lib/postgresql/data/pgdata
+        secrets:
+            - db_password
+        volumes:
+            - pg-data:/var/lib/postgresql/data
+            # The postgres entrypoint only runs files (not dirs) directly
+            # in /docker-entrypoint-initdb.d/.  Mount each SQL file with a
+            # numeric prefix so they execute in the right order.
+            - ./db-init/00-extensions.sql:/docker-entrypoint-initdb.d/00-extensions.sql:ro
+            - ../db/schema/init.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+            - ../db/triggers/audit_log_immutable.sql:/docker-entrypoint-initdb.d/20-audit-chain.sql:ro
+            - ../db/triggers/phase4_pin_policy.sql:/docker-entrypoint-initdb.d/21-pin-policy.sql:ro
+            - ../db/triggers/phase5_drap.sql:/docker-entrypoint-initdb.d/22-drap.sql:ro
+            - ../db/triggers/phase6_db_hardening.sql:/docker-entrypoint-initdb.d/23-db-hardening.sql:ro
+            - ../db/seeders/01_initial_admin.sql:/docker-entrypoint-initdb.d/90-admin.sql:ro
+        # Not port-forwarded — internal network only.
+        networks: [cphc-pos]
+        read_only: false
+        tmpfs:
+            - /tmp:size=64M
+            - /run/postgresql:size=16M
+        security_opt:
+            - no-new-privileges:true
+        cap_drop: [ALL]
+        cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+        mem_limit: 512m
+        cpus: 1.5
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U cphc_app -d cphc"]
+            interval: 10s
+            timeout: 3s
+            retries: 5
+
+secrets:
+    db_password:
+        file: ./secrets/db_password
+    audit_key:
+        file: ./secrets/audit_key
+    session_secret:
+        file: ./secrets/session_secret
+
+volumes:
+    pg-data: {}
+    app-storage: {}
+
+networks:
+    cphc-pos:
+        driver: bridge

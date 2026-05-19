@@ -1,0 +1,72 @@
+# CPHC Pharmacy POS — Caddy config.
+# - Local HTTPS via Caddy's internal CA (self-signed for pharmacy.local).
+# - FastCGI to PHP-FPM over UNIX socket.
+# - Strict security headers; per-request CSP nonce is added by PHP itself.
+
+{
+    auto_https disable_redirects
+    admin off
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+    servers {
+        protocols h1 h2
+    }
+}
+
+# HTTP → HTTPS redirect, except /healthz so the container healthcheck
+# (busybox wget, doesn't follow redirects) can hit it without TLS.
+http://pharmacy.local, http://localhost {
+    @healthz path /healthz
+    handle @healthz {
+        respond "ok" 200
+    }
+    handle {
+        redir https://{host}{uri} 308
+    }
+}
+
+https://pharmacy.local, https://localhost {
+    tls internal
+
+    root * /var/www/public
+    encode zstd gzip
+
+    # Static assets: serve directly, long cache.
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+    handle @assets {
+        file_server
+    }
+
+    # Block dotfiles and source dirs.
+    @hidden path_regexp ^/\.|/src/|/db/|/secrets/
+    respond @hidden 404
+
+    # Security headers. CSP comes from PHP (per-request nonce), not Caddy.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        -Server
+        -X-Powered-By
+    }
+
+    # Everything else → front controller.
+    @php {
+        not path /assets/*
+    }
+    handle @php {
+        rewrite * /index.php
+        php_fastcgi 127.0.0.1:9000 {
+            # Pass real client IP through for rate-limit/audit logging.
+            env HTTP_X_FORWARDED_FOR {http.request.header.X-Forwarded-For}
+        }
+    }
+}

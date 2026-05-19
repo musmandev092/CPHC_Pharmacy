@@ -1,0 +1,534 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+enum MedicineForm {
+  TABLET
+  CAPSULE
+  SOFT_GEL_CAPSULE
+  SYRUP
+  SUSPENSION
+  INJECTION
+  INJECTION_AMPOULE
+  INJECTION_VIAL
+  CREAM
+  OINTMENT
+  GEL
+  DROPS
+  INHALER
+  PATCH
+  SUPPOSITORY
+  SACHET
+  POWDER
+  IV_FLUID
+  LOTION
+  SPRAY
+  DEVICE
+  OTHER
+}
+
+enum ControlledSchedule {
+  NONE
+  SCHEDULE_G
+  SCHEDULE_H
+  NARCOTIC
+}
+
+enum TaxCode {
+  EXEMPT
+  STANDARD_18
+  REDUCED
+  ZERO_RATED
+}
+
+enum GrnStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum PaymentMode {
+  CASH
+  CARD
+  OTHER
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+  REFUNDED_PARTIAL
+  REFUNDED_FULL
+}
+
+enum ReturnReason {
+  CUSTOMER_CHANGED_MIND
+  DAMAGED
+  WRONG_ITEM
+  ADVERSE_REACTION
+  EXPIRED
+  OTHER
+}
+
+enum ReturnStatus {
+  PENDING_REVIEW
+  APPROVED_RESTOCK
+  RETURN_TO_SUPPLIER
+  WRITE_OFF
+}
+
+enum AdjustmentReason {
+  DAMAGE
+  EXPIRY_WRITEOFF
+  SHRINKAGE
+  COUNT_CORRECTION
+  SAMPLE
+  DONATION
+  OTHER
+}
+
+enum MovementType {
+  GRN_RECEIPT
+  SALE
+  RETURN_QUARANTINE
+  RETURN_RESTOCK
+  ADJUSTMENT
+  WRITE_OFF
+  EXPIRY_BLOCK
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+  RECONCILED
+}
+
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(120)
+  address   String?
+  phone     String?  @db.VarChar(40)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  users            User[]
+  batches          Batch[]
+  grnDocuments     GrnDocument[]
+  sales            Sale[]
+  returns          Return[]
+  stockAdjustments StockAdjustment[]
+  movements        InventoryMovement[]
+  sessions         CashierSession[]
+
+  @@map("branches")
+}
+
+model User {
+  id           BigInt    @id @default(autoincrement())
+  fullName     String    @map("full_name") @db.VarChar(120)
+  username     String    @unique @db.VarChar(60)
+  pinHash      String    @map("pin_hash") @db.VarChar(255)
+  passwordHash String?   @map("password_hash") @db.VarChar(255)
+  role         UserRole
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
+
+  branchId Int @default(1) @map("branch_id")
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  receivedGrns     GrnDocument[]     @relation("ReceivedBy")
+  postedGrns       GrnDocument[]     @relation("PostedBy")
+  sales            Sale[]
+  authorizedDiscounts Sale[]          @relation("DiscountAuthorizedBy")
+  initiatedReturns Return[]          @relation("InitiatedBy")
+  authorizedReturns Return[]         @relation("AuthorizedBy")
+  adjudicatedReturns Return[]        @relation("AdjudicatedBy")
+  stockAdjustments StockAdjustment[]
+  inventoryMovements InventoryMovement[]
+  sessions         CashierSession[]
+  settingsUpdated  Setting[]
+
+  @@map("users")
+  @@index([role, isActive, deletedAt])
+}
+
+model Supplier {
+  id           BigInt    @id @default(autoincrement())
+  name         String    @db.VarChar(160)
+  contactPhone String?   @map("contact_phone") @db.VarChar(40)
+  ntn          String?   @db.VarChar(40)
+  address      String?
+  bookerName   String?   @map("booker_name") @db.VarChar(120)
+  salesmanName String?   @map("salesman_name") @db.VarChar(120)
+  paymentTerms String?   @default("CASH") @map("payment_terms") @db.VarChar(60)
+  notes        String?
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz
+
+  batches      Batch[]
+  grnDocuments GrnDocument[]
+
+  @@map("suppliers")
+  @@index([name, isActive, deletedAt])
+}
+
+model Medicine {
+  id                  BigInt            @id @default(autoincrement())
+  sku                 String            @unique @db.VarChar(40)
+  primaryBarcode      String?           @map("primary_barcode") @db.VarChar(60)
+  brandName           String            @map("brand_name") @db.VarChar(160)
+  genericName         String            @map("generic_name") @db.VarChar(160)
+  strength            String?           @db.VarChar(60)
+  form                MedicineForm
+  formCustom          String?           @map("form_custom") @db.VarChar(60)
+  manufacturer        String?           @db.VarChar(160)
+  therapeuticCategory String?           @map("therapeutic_category") @db.VarChar(120)
+  purchaseUnit        String            @map("purchase_unit") @db.VarChar(40)
+  baseUnit            String            @map("base_unit") @db.VarChar(40)
+  unitsPerPurchase    Int               @map("units_per_purchase")
+  prescriptionRequired Boolean          @default(false) @map("prescription_required")
+  controlledSchedule  ControlledSchedule @default(NONE) @map("controlled_schedule")
+  taxCodeValue        TaxCode           @default(EXEMPT) @map("tax_code_value")
+  reorderLevel        Int?              @default(0) @map("reorder_level")
+  reorderQuantity     Int?              @default(0) @map("reorder_quantity")
+  reorderUnit         String            @default("PURCHASE") @map("reorder_unit") @db.VarChar(20)
+  isActive            Boolean           @default(true) @map("is_active")
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt           DateTime?         @map("deleted_at") @db.Timestamptz
+
+  batches          Batch[]
+  grnLines         GrnLine[]
+  saleItems        SaleItem[]
+  returns          Return[]
+  stockAdjustments StockAdjustment[]
+  movements        InventoryMovement[]
+
+  @@map("medicines")
+  @@index([primaryBarcode])
+  @@index([isActive, deletedAt])
+}
+
+model Batch {
+  id             BigInt   @id @default(autoincrement())
+  branchId       Int      @default(1) @map("branch_id")
+  branch         Branch   @relation(fields: [branchId], references: [id])
+  medicineId     BigInt   @map("medicine_id")
+  medicine       Medicine @relation(fields: [medicineId], references: [id])
+  supplierId     BigInt?  @map("supplier_id")
+  supplier       Supplier? @relation(fields: [supplierId], references: [id])
+  grnId          BigInt?  @map("grn_id")
+  grn            GrnDocument? @relation(fields: [grnId], references: [id])
+  batchNumber    String   @map("batch_number") @db.VarChar(50)
+  distributorRef String?  @map("distributor_ref") @db.VarChar(60)
+  expiryDate     DateTime @map("expiry_date") @db.Date
+  receivedQty    Int      @map("received_qty")
+  focQty         Int      @default(0) @map("foc_qty")
+  currentQty     Int      @map("current_qty")
+  costPerUnit    Decimal  @map("cost_per_unit") @db.Decimal(12, 4)
+  mrpPerUnit     Decimal  @map("mrp_per_unit") @db.Decimal(12, 2)
+  isQuarantined  Boolean  @default(false) @map("is_quarantined")
+  isExpired      Boolean  @default(false) @map("is_expired")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  grnLines         GrnLine[]
+  saleItems        SaleItem[]
+  returns          Return[]
+  stockAdjustments StockAdjustment[]
+  movements        InventoryMovement[]
+
+  @@map("batches")
+  @@index([medicineId, expiryDate])
+  @@index([expiryDate])
+  @@unique([medicineId, batchNumber, expiryDate])
+}
+
+model GrnDocument {
+  id               BigInt     @id @default(autoincrement())
+  branchId         Int        @default(1) @map("branch_id")
+  branch           Branch     @relation(fields: [branchId], references: [id])
+  grnNumber        String     @unique @map("grn_number") @db.VarChar(40)
+  supplierId       BigInt     @map("supplier_id")
+  supplier         Supplier   @relation(fields: [supplierId], references: [id])
+  invoiceNumber    String?    @map("invoice_number") @db.VarChar(60)
+  invoiceDate      DateTime?  @map("invoice_date") @db.Date
+  invoiceImagePath String?    @map("invoice_image_path") @db.VarChar(255)
+  receivedById     BigInt     @map("received_by")
+  receivedBy       User       @relation("ReceivedBy", fields: [receivedById], references: [id])
+  postedById       BigInt?    @map("posted_by")
+  postedBy         User?      @relation("PostedBy", fields: [postedById], references: [id])
+  postedAt         DateTime?  @map("posted_at") @db.Timestamptz
+  subtotal         Decimal    @default(0) @db.Decimal(12, 2)
+  taxTotal         Decimal    @default(0) @map("tax_total") @db.Decimal(12, 2)
+  discountTotal    Decimal    @default(0) @map("discount_total") @db.Decimal(12, 2)
+  grandTotal       Decimal    @default(0) @map("grand_total") @db.Decimal(12, 2)
+  status           GrnStatus  @default(DRAFT)
+  notes            String?
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  lines            GrnLine[]
+  batches          Batch[]
+
+  @@map("grn_documents")
+  @@index([supplierId, invoiceDate])
+  @@index([status])
+}
+
+model GrnLine {
+  id              BigInt      @id @default(autoincrement())
+  grnId           BigInt      @map("grn_id")
+  grn             GrnDocument @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  medicineId      BigInt      @map("medicine_id")
+  medicine        Medicine    @relation(fields: [medicineId], references: [id])
+  batchId         BigInt?     @map("batch_id")
+  batch           Batch?      @relation(fields: [batchId], references: [id])
+  batchNumber     String      @map("batch_number") @db.VarChar(50)
+  expiryDate      DateTime    @map("expiry_date") @db.Date
+  paidQty         Int         @map("paid_qty")
+  focQty          Int         @default(0) @map("foc_qty")
+  qtyInBaseUnits  Int         @map("qty_in_base_units")
+  unitCost        Decimal     @map("unit_cost") @db.Decimal(12, 4)
+  mrpPerBaseUnit  Decimal     @map("mrp_per_base_unit") @db.Decimal(12, 2)
+  lineTotal       Decimal     @map("line_total") @db.Decimal(12, 2)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("grn_lines")
+  @@index([grnId])
+}
+
+model Sale {
+  id                    BigInt       @id @default(autoincrement())
+  branchId              Int          @default(1) @map("branch_id")
+  branch                Branch       @relation(fields: [branchId], references: [id])
+  receiptNumber         String       @unique @map("receipt_number") @db.VarChar(40)
+  cashierId             BigInt       @map("cashier_id")
+  cashier               User         @relation(fields: [cashierId], references: [id])
+  cashierSessionId      BigInt?      @map("cashier_session_id")
+  cashierSession        CashierSession? @relation(fields: [cashierSessionId], references: [id])
+  customerName          String?      @map("customer_name") @db.VarChar(160)
+  customerPhone         String?      @map("customer_phone") @db.VarChar(40)
+  customerRemarks       String?      @map("customer_remarks") @db.VarChar(255)
+  hasControlledDrug     Boolean      @default(false) @map("has_controlled_drug")
+  doctorName            String?      @map("doctor_name") @db.VarChar(160)
+  patientName           String?      @map("patient_name") @db.VarChar(160)
+  patientPhone          String?      @map("patient_phone") @db.VarChar(40)
+  patientAddress        String?      @map("patient_address")
+  prescriptionImagePath String?      @map("prescription_image_path") @db.VarChar(255)
+  subtotal              Decimal      @db.Decimal(12, 2)
+  taxTotal              Decimal      @default(0) @map("tax_total") @db.Decimal(12, 2)
+  discountTotal         Decimal      @default(0) @map("discount_total") @db.Decimal(12, 2)
+  discountAuthorizedById BigInt?     @map("discount_authorized_by")
+  discountAuthorizedBy User?         @relation("DiscountAuthorizedBy", fields: [discountAuthorizedById], references: [id])
+  posServiceFee         Decimal      @default(0) @map("pos_service_fee") @db.Decimal(12, 2)
+  grandTotal            Decimal      @map("grand_total") @db.Decimal(12, 2)
+  amountTendered        Decimal?     @map("amount_tendered") @db.Decimal(12, 2)
+  changeReturned        Decimal?     @map("change_returned") @db.Decimal(12, 2)
+  paymentMode           PaymentMode  @default(CASH) @map("payment_mode")
+  status                SaleStatus   @default(COMPLETED)
+  soldAt                DateTime     @default(now()) @map("sold_at") @db.Timestamptz
+  createdAt             DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  items                 SaleItem[]
+  returns               Return[]
+
+  @@map("sales")
+  @@index([soldAt])
+  @@index([cashierId, soldAt])
+  @@index([customerPhone])
+  @@index([status])
+}
+
+model SaleItem {
+  id               BigInt   @id @default(autoincrement())
+  saleId           BigInt   @map("sale_id")
+  sale             Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicineId       BigInt   @map("medicine_id")
+  medicine         Medicine @relation(fields: [medicineId], references: [id])
+  batchId          BigInt   @map("batch_id")
+  batch            Batch    @relation(fields: [batchId], references: [id])
+  qtyInBaseUnits   Int      @map("qty_in_base_units")
+  soldUnitLabel    String   @map("sold_unit_label") @db.VarChar(40)
+  soldUnitFactor   Int      @default(1) @map("sold_unit_factor")
+  qtySoldDisplay   Int      @map("qty_sold_display")
+  unitCost         Decimal  @map("unit_cost") @db.Decimal(12, 4)
+  unitMrp          Decimal  @map("unit_mrp") @db.Decimal(12, 2)
+  lineSubtotal     Decimal  @map("line_subtotal") @db.Decimal(12, 2)
+  lineTax          Decimal  @default(0) @map("line_tax") @db.Decimal(12, 2)
+  lineDiscount     Decimal  @default(0) @map("line_discount") @db.Decimal(12, 2)
+  lineTotal        Decimal  @map("line_total") @db.Decimal(12, 2)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  returns          Return[]
+
+  @@map("sale_items")
+  @@index([saleId])
+  @@index([medicineId])
+  @@index([batchId])
+}
+
+model Return {
+  id                BigInt       @id @default(autoincrement())
+  branchId          Int          @default(1) @map("branch_id")
+  branch            Branch       @relation(fields: [branchId], references: [id])
+  returnNumber      String       @unique @map("return_number") @db.VarChar(40)
+  originalSaleId    BigInt       @map("original_sale_id")
+  originalSale      Sale         @relation(fields: [originalSaleId], references: [id])
+  saleItemId        BigInt       @map("sale_item_id")
+  saleItem          SaleItem     @relation(fields: [saleItemId], references: [id])
+  medicineId        BigInt       @map("medicine_id")
+  medicine          Medicine     @relation(fields: [medicineId], references: [id])
+  batchId           BigInt       @map("batch_id")
+  batch             Batch        @relation(fields: [batchId], references: [id])
+  qtyReturnedUnits  Int          @map("qty_returned_units")
+  refundAmount      Decimal      @map("refund_amount") @db.Decimal(12, 2)
+  reason            ReturnReason
+  physicalCondition String?      @map("physical_condition")
+  initiatedById     BigInt       @map("initiated_by")
+  initiatedBy       User         @relation("InitiatedBy", fields: [initiatedById], references: [id])
+  authorizedById    BigInt?      @map("authorized_by")
+  authorizedBy      User?        @relation("AuthorizedBy", fields: [authorizedById], references: [id])
+  status            ReturnStatus @default(PENDING_REVIEW)
+  adjudicatedById   BigInt?      @map("adjudicated_by")
+  adjudicatedBy     User?        @relation("AdjudicatedBy", fields: [adjudicatedById], references: [id])
+  adjudicatedAt     DateTime?    @map("adjudicated_at") @db.Timestamptz
+  adjudicationNotes String?      @map("adjudication_notes")
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("returns")
+  @@index([status])
+  @@index([originalSaleId])
+}
+
+model StockAdjustment {
+  id               BigInt           @id @default(autoincrement())
+  branchId         Int              @default(1) @map("branch_id")
+  branch           Branch           @relation(fields: [branchId], references: [id])
+  adjustmentNumber String           @unique @map("adjustment_number") @db.VarChar(40)
+  medicineId       BigInt           @map("medicine_id")
+  medicine         Medicine         @relation(fields: [medicineId], references: [id])
+  batchId          BigInt           @map("batch_id")
+  batch            Batch            @relation(fields: [batchId], references: [id])
+  qtyDelta         Int              @map("qty_delta")
+  reason           AdjustmentReason
+  notes            String?
+  performedById    BigInt           @map("performed_by")
+  performedBy      User             @relation(fields: [performedById], references: [id])
+  costImpact       Decimal?         @map("cost_impact") @db.Decimal(12, 2)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("stock_adjustments")
+  @@index([createdAt])
+  @@index([batchId])
+}
+
+model InventoryMovement {
+  id            BigInt       @id @default(autoincrement())
+  branchId      Int          @default(1) @map("branch_id")
+  branch        Branch       @relation(fields: [branchId], references: [id])
+  medicineId    BigInt       @map("medicine_id")
+  medicine      Medicine     @relation(fields: [medicineId], references: [id])
+  batchId       BigInt       @map("batch_id")
+  batch         Batch        @relation(fields: [batchId], references: [id])
+  movementType  MovementType @map("movement_type")
+  qtyDelta      Int          @map("qty_delta")
+  qtyBefore     Int          @map("qty_before")
+  qtyAfter      Int          @map("qty_after")
+  refTable      String?      @map("ref_table") @db.VarChar(40)
+  refId         BigInt?      @map("ref_id")
+  performedById BigInt?      @map("performed_by")
+  performedBy   User?        @relation(fields: [performedById], references: [id])
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("inventory_movements")
+  @@index([batchId, createdAt])
+  @@index([medicineId, createdAt])
+  @@index([refTable, refId])
+}
+
+model CashierSession {
+  id                   BigInt        @id @default(autoincrement())
+  branchId             Int           @default(1) @map("branch_id")
+  branch               Branch        @relation(fields: [branchId], references: [id])
+  cashierId            BigInt        @map("cashier_id")
+  cashier              User          @relation(fields: [cashierId], references: [id])
+  openedAt             DateTime      @default(now()) @map("opened_at") @db.Timestamptz
+  closedAt             DateTime?     @map("closed_at") @db.Timestamptz
+  openingFloat         Decimal       @default(0) @map("opening_float") @db.Decimal(12, 2)
+  expectedCashInDrawer Decimal?      @map("expected_cash_in_drawer") @db.Decimal(12, 2)
+  countedCash          Decimal?      @map("counted_cash") @db.Decimal(12, 2)
+  cashVariance         Decimal?      @map("cash_variance") @db.Decimal(12, 2)
+  totalCashSales       Decimal       @default(0) @map("total_cash_sales") @db.Decimal(12, 2)
+  totalRefundsPaid     Decimal       @default(0) @map("total_refunds_paid") @db.Decimal(12, 2)
+  totalSalesCount      Int           @default(0) @map("total_sales_count")
+  status               SessionStatus @default(OPEN)
+  zReportPdfPath       String?       @map("z_report_pdf_path") @db.VarChar(255)
+  notes                String?
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  sales                Sale[]
+
+  @@map("cashier_sessions")
+  @@index([cashierId, openedAt])
+  @@index([status])
+}
+
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  timestamp   DateTime @default(now()) @db.Timestamptz
+  userId      BigInt?  @map("user_id")
+  actionType  String   @map("action_type") @db.VarChar(60)
+  entityType  String   @map("entity_type") @db.VarChar(40)
+  entityId    BigInt?  @map("entity_id")
+  beforeValue Json?    @map("before_value")
+  afterValue  Json?    @map("after_value")
+  reason      String?
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  userAgent   String?  @map("user_agent") @db.VarChar(255)
+
+  @@map("audit_log")
+  @@index([timestamp(sort: Desc)])
+  @@index([userId, timestamp(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([actionType])
+}
+
+model Setting {
+  key         String   @id @db.VarChar(80)
+  value       String
+  description String?
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  updatedById BigInt?  @map("updated_by")
+  updatedBy   User?    @relation(fields: [updatedById], references: [id])
+
+  @@map("settings")
+}
+
+model RateLimit {
+  key     String   @id @db.VarChar(120)
+  count   Int      @default(1)
+  resetAt DateTime @map("reset_at") @db.Timestamptz
+
+  @@map("rate_limits")
+}

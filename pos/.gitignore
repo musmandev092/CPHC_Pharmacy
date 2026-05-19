@@ -1,0 +1,4 @@
+secrets/db_password
+secrets/audit_key
+secrets/session_secret
+*.log

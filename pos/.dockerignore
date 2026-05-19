@@ -1,0 +1,6 @@
+# What never goes into the image build context.
+secrets/
+*.log
+.git
+.gitignore
+README.md
